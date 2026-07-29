@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+
+# Go modules are consumed directly from the Git tag — no registry publish step.
+# Tagging v1.0.0 makes `go get github.com/eSMS-Africa/esms-go@v1.0.0` work.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: test -z "$(gofmt -l .)" || (echo "gofmt needed:" && gofmt -l . && exit 1)
