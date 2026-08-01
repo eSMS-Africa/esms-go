@@ -2,7 +2,7 @@
 
 Official Go SDK for the [eSMS Africa](https://esmsafrica.io) SMS API.
 
-Send SMS across 14+ African countries, track delivery, schedule messages, and check your balance. Standard library only — no third-party dependencies.
+Send SMS across 14+ African countries, track delivery, schedule messages, and check your balance. Standard library only - no third-party dependencies.
 
 ## Install
 
@@ -30,7 +30,7 @@ func main() {
 	res, err := client.Messages.Send(context.Background(), esms.SendParams{
 		To:       "+256700000000",
 		Text:     "Your verification code is 123456",
-		SenderID: "eSMSAfrica", // optional — falls back to the route default
+		SenderID: "eSMSAfrica", // optional - falls back to the route default
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -117,11 +117,11 @@ if err != nil {
 
 | Helper | When |
 |--------|------|
-| `IsAuthentication()` | 401 — key missing or invalid |
-| `IsPermission()` | 403 — not allowed |
-| `IsNotFound()` | 404 — no such message |
-| `IsInsufficientBalance()` | 422 — not enough credit (`Balance()`, `Cost()`, `Currency()`) |
-| `IsRateLimit()` | 429 — slow down |
+| `IsAuthentication()` | 401 - key missing or invalid |
+| `IsPermission()` | 403 - not allowed |
+| `IsNotFound()` | 404 - no such message |
+| `IsInsufficientBalance()` | 422 - not enough credit (`Balance()`, `Cost()`, `Currency()`) |
+| `IsRateLimit()` | 429 - slow down |
 | `IsConnection()` | network failure or timeout |
 
 ## Configuration

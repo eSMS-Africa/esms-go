@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: ["main"]
 
-# Go modules are consumed directly from the Git tag — no registry publish step.
+# Go modules are consumed directly from the Git tag - no registry publish step.
 # Tagging v1.0.0 makes `go get github.com/eSMS-Africa/esms-go@v1.0.0` work.
 jobs:
   test:
