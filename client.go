@@ -13,6 +13,9 @@ package esms
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +47,10 @@ type Client struct {
 	Balance *BalanceService
 	// Routes lists available routes and pricing.
 	Routes *RoutesService
+	// Verify sends and checks one-time verification codes (managed OTP).
+	Verify *VerifyService
+	// OptOuts manages the opt-out (STOP / DND) list.
+	OptOuts *OptOutsService
 }
 
 // Option customises a Client.
@@ -79,11 +86,26 @@ func New(apiKey string, opts ...Option) *Client {
 	c.Messages = &MessagesService{c: c}
 	c.Balance = &BalanceService{c: c}
 	c.Routes = &RoutesService{c: c}
+	c.Verify = &VerifyService{c: c}
+	c.OptOuts = &OptOutsService{c: c}
 	return c
 }
 
 // BaseURL returns the URL requests are sent to.
 func (c *Client) BaseURL() string { return c.baseURL }
+
+// VerifyWebhook reports whether an incoming webhook's HMAC-SHA256 signature is
+// valid (constant-time). Pass the exact raw request body, the X-Webhook-Signature
+// header (e.g. "sha256=..."), and your signing secret.
+func VerifyWebhook(rawBody []byte, signature, secret string) bool {
+	if signature == "" || secret == "" {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(rawBody)
+	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(signature))
+}
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {
 	if c.apiKey == "" {

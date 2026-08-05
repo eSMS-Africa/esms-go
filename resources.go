@@ -93,3 +93,72 @@ func (s *RoutesService) List(ctx context.Context) ([]Route, error) {
 	}
 	return out, nil
 }
+
+// VerifyService sends and checks one-time verification codes (managed OTP).
+type VerifyService struct{ c *Client }
+
+// VerifyStartParams configures a verification.
+type VerifyStartParams struct {
+	To            string `json:"to"`
+	SenderID      string `json:"sender_id,omitempty"`
+	CodeLength    int    `json:"code_length,omitempty"`
+	ExpirySeconds int    `json:"expiry_seconds,omitempty"`
+	Template      string `json:"template,omitempty"`
+}
+
+// Start sends a verification code to a phone number.
+func (s *VerifyService) Start(ctx context.Context, params VerifyStartParams) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/verify/start", nil, params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// VerifyCheckParams checks a code the user entered.
+type VerifyCheckParams struct {
+	Code           string `json:"code"`
+	VerificationID string `json:"verification_id,omitempty"`
+	To             string `json:"to,omitempty"`
+}
+
+// Check validates a code. The returned map includes status: approved|pending|failed|expired.
+func (s *VerifyService) Check(ctx context.Context, params VerifyCheckParams) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/verify/check", nil, params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// OptOutsService manages the opt-out (STOP / DND) list.
+type OptOutsService struct{ c *Client }
+
+// List returns numbers that have opted out of your messages.
+func (s *OptOutsService) List(ctx context.Context) ([]map[string]any, error) {
+	var out struct {
+		OptOuts []map[string]any `json:"opt_outs"`
+	}
+	if err := s.c.do(ctx, "GET", "/opt-outs", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.OptOuts, nil
+}
+
+// Add manually adds a number to your opt-out list.
+func (s *OptOutsService) Add(ctx context.Context, phone string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/opt-outs", nil, map[string]string{"phone": phone}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Remove takes a number off your opt-out list.
+func (s *OptOutsService) Remove(ctx context.Context, phone string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "DELETE", "/opt-outs/"+url.PathEscape(phone), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
