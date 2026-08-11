@@ -120,7 +120,7 @@ if err != nil {
 | `IsAuthentication()` | 401 - key missing or invalid |
 | `IsPermission()` | 403 - not allowed |
 | `IsNotFound()` | 404 - no such message |
-| `IsInsufficientBalance()` | 422 - not enough credit (`Balance()`, `Cost()`, `Currency()`) |
+| `IsInsufficientBalance()` | 402 - not enough credit (`Balance()`, `Cost()`, `Currency()`) |
 | `IsRateLimit()` | 429 - slow down |
 | `IsConnection()` | network failure or timeout |
 
