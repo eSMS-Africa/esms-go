@@ -3,6 +3,7 @@ package esms
 import (
 	"context"
 	"net/url"
+	"strconv"
 )
 
 // MessagesService handles SMS message operations.
@@ -100,16 +101,23 @@ type VerifyService struct{ c *Client }
 // VerifyStartParams configures a verification.
 type VerifyStartParams struct {
 	To            string `json:"to"`
+	AppID         string `json:"app_id,omitempty"` // a Verify App id - its template/policy apply
 	SenderID      string `json:"sender_id,omitempty"`
 	CodeLength    int    `json:"code_length,omitempty"`
 	ExpirySeconds int    `json:"expiry_seconds,omitempty"`
 	Template      string `json:"template,omitempty"`
+	// IdempotencyKey, when set, makes a retried Start return the original verification.
+	IdempotencyKey string `json:"-"`
 }
 
 // Start sends a verification code to a phone number.
 func (s *VerifyService) Start(ctx context.Context, params VerifyStartParams) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "POST", "/verify/start", nil, params, &out); err != nil {
+	var headers map[string]string
+	if params.IdempotencyKey != "" {
+		headers = map[string]string{"Idempotency-Key": params.IdempotencyKey}
+	}
+	if err := s.c.do(ctx, "POST", "/verify/start", nil, params, &out, headers); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -126,6 +134,123 @@ type VerifyCheckParams struct {
 func (s *VerifyService) Check(ctx context.Context, params VerifyCheckParams) (map[string]any, error) {
 	var out map[string]any
 	if err := s.c.do(ctx, "POST", "/verify/check", nil, params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Get fetches a verification's status without consuming an attempt.
+func (s *VerifyService) Get(ctx context.Context, id string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/verify/"+id, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Resend sends a fresh code for the same verification.
+func (s *VerifyService) Resend(ctx context.Context, id string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/verify/"+id+"/resend", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Cancel voids an in-flight verification.
+func (s *VerifyService) Cancel(ctx context.Context, id string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/verify/"+id+"/cancel", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// VerifyListParams filters a verification listing.
+type VerifyListParams struct {
+	Status string
+	AppID  string
+	To     string
+	Page   int
+	Limit  int
+}
+
+// List returns your verifications (most recent first).
+func (s *VerifyService) List(ctx context.Context, params VerifyListParams) (map[string]any, error) {
+	q := url.Values{}
+	if params.Status != "" {
+		q.Set("status", params.Status)
+	}
+	if params.AppID != "" {
+		q.Set("app_id", params.AppID)
+	}
+	if params.To != "" {
+		q.Set("to", params.To)
+	}
+	if params.Page > 0 {
+		q.Set("page", strconv.Itoa(params.Page))
+	}
+	if params.Limit > 0 {
+		q.Set("limit", strconv.Itoa(params.Limit))
+	}
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/verify", q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ---- Verify Apps ----
+
+// ListApps returns your Verify Apps.
+func (s *VerifyService) ListApps(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/verify/apps", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CreateApp creates a Verify App (name, sender_id, template, code_length, expiry_seconds, max_attempts, allowed_countries, locale, enabled).
+func (s *VerifyService) CreateApp(ctx context.Context, body map[string]any) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/verify/apps", nil, body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetApp fetches one Verify App.
+func (s *VerifyService) GetApp(ctx context.Context, id string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/verify/apps/"+id, nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UpdateApp updates a Verify App (full replace - send all fields; name is required).
+func (s *VerifyService) UpdateApp(ctx context.Context, id string, body map[string]any) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "PATCH", "/verify/apps/"+id, nil, body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteApp deletes a Verify App.
+func (s *VerifyService) DeleteApp(ctx context.Context, id string) error {
+	return s.c.do(ctx, "DELETE", "/verify/apps/"+id, nil, nil, nil)
+}
+
+// AppStats returns per-app verification stats.
+func (s *VerifyService) AppStats(ctx context.Context, id string, days int) (map[string]any, error) {
+	q := url.Values{}
+	if days > 0 {
+		q.Set("days", strconv.Itoa(days))
+	}
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/verify/apps/"+id+"/stats", q, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

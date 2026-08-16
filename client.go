@@ -107,7 +107,7 @@ func VerifyWebhook(rawBody []byte, signature, secret string) bool {
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
-func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {
+func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any, extraHeaders ...map[string]string) error {
 	if c.apiKey == "" {
 		return &Error{Message: "an API key is required; create one under Developers -> API Keys"}
 	}
@@ -141,6 +141,13 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		req.Header.Set("User-Agent", "esms-go/"+version)
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		for _, hs := range extraHeaders {
+			for k, v := range hs {
+				if v != "" {
+					req.Header.Set(k, v)
+				}
+			}
 		}
 
 		resp, err := c.httpClient.Do(req)
