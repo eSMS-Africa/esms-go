@@ -96,7 +96,7 @@ func TestAuthError(t *testing.T) {
 
 func TestInsufficientBalance(t *testing.T) {
 	client, srv := testServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(422)
+		w.WriteHeader(402)
 		_, _ = w.Write([]byte(`{"detail":{"code":"insufficient_balance","message":"low","balance":1,"cost":5,"currency":"KES"}}`))
 	})
 	defer srv.Close()
@@ -153,5 +153,82 @@ func TestRoutes(t *testing.T) {
 	}
 	if len(routes) != 1 || routes[0].Code != "ESMS_UG" || routes[0].PricePerSegment != 35 || !routes[0].IsActive {
 		t.Fatalf("unexpected routes: %+v", routes)
+	}
+}
+
+func TestErrorEnvelopeShapes(t *testing.T) {
+	e := errorFromResponse(422, map[string]any{
+		"error":  map[string]any{"code": "validation_error", "message": "Request validation failed", "request_id": "r1"},
+		"detail": []any{map[string]any{"loc": []any{"body", "to"}, "msg": "Field required"}},
+	}, "")
+	if e.Code != "validation_error" || e.Message != "Request validation failed: body.to: Field required" || e.RequestID != "r1" || !e.IsInvalidRequest() {
+		t.Fatalf("422 parse wrong: %+v", e)
+	}
+	e = errorFromResponse(429, map[string]any{"error": "Rate limit exceeded: 30 per 1 minute"}, "")
+	if e.Message != "Rate limit exceeded: 30 per 1 minute" || !e.IsRateLimit() {
+		t.Fatalf("429 string parse wrong: %+v", e)
+	}
+	e = errorFromResponse(429, map[string]any{
+		"error":  map[string]any{"code": "rate_limited", "message": "Too many requests"},
+		"detail": map[string]any{"code": "rate_limited", "message": "Too many requests"},
+	}, "")
+	if e.Code != "rate_limited" || e.Message != "Too many requests" {
+		t.Fatalf("429 envelope parse wrong: %+v", e)
+	}
+	e = errorFromResponse(402, map[string]any{"detail": map[string]any{"code": "insufficient_balance", "required": 5.0, "available": 1.0}}, "")
+	bal, _ := e.Balance()
+	cost, _ := e.Cost()
+	if !e.IsInsufficientBalance() || bal != 1 || cost != 5 {
+		t.Fatalf("402 parse wrong: %+v", e)
+	}
+}
+
+func TestRetryPolicyAndIdempotencyKey(t *testing.T) {
+	calls := 0
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"detail":"Internal server error"}`))
+	}))
+	defer srv.Close()
+	client := New("esms_test_abc", WithBaseURL(srv.URL), WithMaxRetries(1))
+
+	if _, err := client.Messages.Retry(context.Background(), "m1"); err == nil {
+		t.Fatal("expected error")
+	}
+	if calls != 1 {
+		t.Fatalf("POST without key retried: %d calls", calls)
+	}
+	calls, keys = 0, nil
+	_, _ = client.Messages.Send(context.Background(), SendParams{To: "+256700000000", Text: "x"})
+	if calls != 2 || len(keys[0]) != 36 || keys[0] != keys[1] {
+		t.Fatalf("send retry/key wrong: calls=%d keys=%v", calls, keys)
+	}
+}
+
+func TestBulkOmitsEmptyListsAndRetryResult(t *testing.T) {
+	var raw map[string]any
+	client, srv := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/messages/m1/retry" {
+			_, _ = w.Write([]byte(`{"id":"m2","status":"submitted","retry_count":1}`))
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		_, _ = w.Write([]byte(`{"batch_id":"b1","total_recipients":1,"estimated_cost":0.5,"status":"processing"}`))
+	})
+	defer srv.Close()
+	ctx := context.Background()
+	if _, err := client.Messages.SendBulk(ctx, BulkSendParams{Recipients: []BulkRecipient{{To: "+256700000000"}}, Text: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := raw["contact_list_ids"]; has {
+		t.Fatalf("contact_list_ids should be omitted: %v", raw)
+	}
+	r, err := client.Messages.Retry(ctx, "m1")
+	if err != nil || r.RetryCount != 1 || r.ID != "m2" {
+		t.Fatalf("retry result wrong: %+v %v", r, err)
 	}
 }

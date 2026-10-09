@@ -14,13 +14,20 @@ type SendParams struct {
 	ScheduleMode string `json:"schedule_mode,omitempty"`
 	// ScheduledAt is an ISO-8601 UTC time; required when ScheduleMode is "scheduled".
 	ScheduledAt string `json:"scheduled_at,omitempty"`
+	// International bills the international-delivery rate (USD) for this send.
+	International bool `json:"international,omitempty"`
+	// IdempotencyKey makes the send safe to retry: a repeat with the same key
+	// returns the original result. A random key is generated when empty.
+	IdempotencyKey string `json:"-"`
 }
 
-// SendResult is returned when a message is accepted.
+// SendResult is returned when a message is accepted. BalanceAfter is 0 for
+// sandbox sends and idempotent replays (the API omits it there).
 type SendResult struct {
 	ID           string  `json:"id"`
 	Status       string  `json:"status"`
 	Segments     int     `json:"segments"`
+	Encoding     string  `json:"encoding"`
 	Cost         float64 `json:"cost"`
 	CostCurrency string  `json:"cost_currency"`
 	RouteCost    float64 `json:"route_cost"`
@@ -30,14 +37,27 @@ type SendResult struct {
 	ScheduledAt  *string `json:"scheduled_at"`
 }
 
-// ListParams filters a message listing.
-type ListParams struct {
-	Page   int    // zero-based page index
-	Limit  int    // page size, 1-100
-	Status string // optional status filter, e.g. "delivered"
+// RetryResult is returned by Messages.Retry.
+type RetryResult struct {
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	RetryCount int    `json:"retry_count"`
 }
 
-// MessageSummary is a single row in a message listing.
+// ListParams filters a message listing.
+type ListParams struct {
+	Page        int    // zero-based page index
+	Limit       int    // page size, 1-100
+	Status      string // optional status filter, e.g. "delivered"
+	To          string // recipient phone (E.164)
+	BatchID     string // bulk batch id from SendBulk
+	DateFrom    string // ISO-8601 lower bound on created time
+	DateTo      string // ISO-8601 upper bound on created time
+	Environment string // "live" (default), "test" or "all"
+}
+
+// MessageSummary is a single row in a message listing. Text is truncated to
+// 100 characters in listings; use Messages.Get for the full body.
 type MessageSummary struct {
 	ID          string  `json:"id"`
 	Phone       string  `json:"phone"`
@@ -81,12 +101,35 @@ type Message struct {
 	Timeline     []TimelineEvent `json:"timeline"`
 }
 
-// BulkSendParams sends one message to every contact in the given lists.
+// BulkRecipient is an inline bulk recipient.
+type BulkRecipient struct {
+	To   string         `json:"to"`
+	Name string         `json:"name,omitempty"`
+	Vars map[string]any `json:"vars,omitempty"`
+}
+
+// BulkSendParams sends one message to many recipients: contact lists and/or
+// inline Recipients.
 type BulkSendParams struct {
-	ContactListIDs []int  `json:"contact_list_ids"`
-	Text           string `json:"text"`
-	SenderID       string `json:"sender_id,omitempty"`
-	Route          string `json:"route,omitempty"`
+	ContactListIDs []int           `json:"contact_list_ids,omitempty"`
+	Recipients     []BulkRecipient `json:"recipients,omitempty"`
+	Text           string          `json:"text"`
+	SenderID       string          `json:"sender_id,omitempty"`
+	Route          string          `json:"route,omitempty"`
+	// ScheduleMode is "now" (default), "scheduled" (contact lists only) or "drip".
+	ScheduleMode string `json:"schedule_mode,omitempty"`
+	ScheduledAt  string `json:"scheduled_at,omitempty"`
+	// DripRate is messages per minute for ScheduleMode "drip".
+	DripRate      int  `json:"drip_rate,omitempty"`
+	International bool `json:"international,omitempty"`
+}
+
+// RateParams prices a message before sending.
+type RateParams struct {
+	To            []string `json:"to"`
+	Text          string   `json:"text"`
+	Route         string   `json:"route,omitempty"`
+	International bool     `json:"international,omitempty"`
 }
 
 // Balance is the current account balance.

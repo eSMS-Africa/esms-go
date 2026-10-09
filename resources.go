@@ -4,15 +4,21 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // MessagesService handles SMS message operations.
 type MessagesService struct{ c *Client }
 
-// Send sends a single SMS.
+// Send sends a single SMS. An Idempotency-Key (params.IdempotencyKey, or a
+// random one) is always sent so retries can never send or charge twice.
 func (s *MessagesService) Send(ctx context.Context, params SendParams) (*SendResult, error) {
 	var out SendResult
-	if err := s.c.do(ctx, "POST", "/messages/send", nil, params, &out); err != nil {
+	key := params.IdempotencyKey
+	if key == "" {
+		key = newIdempotencyKey()
+	}
+	if err := s.c.do(ctx, "POST", "/messages/send", nil, params, &out, map[string]string{"Idempotency-Key": key}); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -34,8 +40,17 @@ func (s *MessagesService) List(ctx context.Context, params ListParams) (*Message
 	if params.Limit > 0 {
 		q.Set("limit", fmtInt(params.Limit))
 	}
-	if params.Status != "" {
-		q.Set("status", params.Status)
+	for k, v := range map[string]string{
+		"status":      params.Status,
+		"to":          params.To,
+		"batch_id":    params.BatchID,
+		"date_from":   params.DateFrom,
+		"date_to":     params.DateTo,
+		"environment": params.Environment,
+	} {
+		if v != "" {
+			q.Set(k, v)
+		}
 	}
 	var out MessageList
 	if err := s.c.do(ctx, "GET", "/messages", q, nil, &out); err != nil {
@@ -53,19 +68,68 @@ func (s *MessagesService) Get(ctx context.Context, messageID string) (*Message, 
 	return &out, nil
 }
 
-// Retry retries a failed message.
-func (s *MessagesService) Retry(ctx context.Context, messageID string) (*SendResult, error) {
-	var out SendResult
+// Retry retries a failed, undelivered, rejected, expired or unknown message.
+func (s *MessagesService) Retry(ctx context.Context, messageID string) (*RetryResult, error) {
+	var out RetryResult
 	if err := s.c.do(ctx, "POST", "/messages/"+url.PathEscape(messageID)+"/retry", nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-// SendBulk sends one message to every contact in the given contact lists.
+// SendBulk sends one message to many recipients. The result carries
+// batch_id, total_recipients, estimated_cost and status; track it with GetBatch.
 func (s *MessagesService) SendBulk(ctx context.Context, params BulkSendParams) (map[string]any, error) {
 	var out map[string]any
 	if err := s.c.do(ctx, "POST", "/messages/send-bulk", nil, params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetBatch returns a bulk batch's aggregate status plus a page of its messages.
+// page and limit of 0 use the API defaults (0 and 50).
+func (s *MessagesService) GetBatch(ctx context.Context, batchID string, page, limit int) (map[string]any, error) {
+	q := url.Values{}
+	if page > 0 {
+		q.Set("page", strconv.Itoa(page))
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/messages/batch/"+url.PathEscape(batchID), q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Statuses returns delivery status for up to 100 messages in one call
+// ({"messages": [...]}).
+func (s *MessagesService) Statuses(ctx context.Context, messageIDs []string) (map[string]any, error) {
+	q := url.Values{}
+	q.Set("ids", strings.Join(messageIDs, ","))
+	var out map[string]any
+	if err := s.c.do(ctx, "GET", "/messages/status", q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Rate prices a message before sending - no charge, no delivery.
+func (s *MessagesService) Rate(ctx context.Context, params RateParams) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/messages/rate", nil, params, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Validate checks numbers offline (format, line type, carrier) - no charge.
+// Returns {"count", "valid", "invalid", "mobile", "results"}.
+func (s *MessagesService) Validate(ctx context.Context, phones []string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/messages/validate", nil, map[string]any{"phone": phones}, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -106,17 +170,19 @@ type VerifyStartParams struct {
 	CodeLength    int    `json:"code_length,omitempty"`
 	ExpirySeconds int    `json:"expiry_seconds,omitempty"`
 	Template      string `json:"template,omitempty"`
-	// IdempotencyKey, when set, makes a retried Start return the original verification.
+	// IdempotencyKey makes a retried Start return the original verification.
+	// A random key is generated when empty.
 	IdempotencyKey string `json:"-"`
 }
 
 // Start sends a verification code to a phone number.
 func (s *VerifyService) Start(ctx context.Context, params VerifyStartParams) (map[string]any, error) {
 	var out map[string]any
-	var headers map[string]string
-	if params.IdempotencyKey != "" {
-		headers = map[string]string{"Idempotency-Key": params.IdempotencyKey}
+	key := params.IdempotencyKey
+	if key == "" {
+		key = newIdempotencyKey()
 	}
+	headers := map[string]string{"Idempotency-Key": key}
 	if err := s.c.do(ctx, "POST", "/verify/start", nil, params, &out, headers); err != nil {
 		return nil, err
 	}
@@ -142,7 +208,7 @@ func (s *VerifyService) Check(ctx context.Context, params VerifyCheckParams) (ma
 // Get fetches a verification's status without consuming an attempt.
 func (s *VerifyService) Get(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "GET", "/verify/"+id, nil, nil, &out); err != nil {
+	if err := s.c.do(ctx, "GET", "/verify/"+url.PathEscape(id), nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -151,7 +217,7 @@ func (s *VerifyService) Get(ctx context.Context, id string) (map[string]any, err
 // Resend sends a fresh code for the same verification.
 func (s *VerifyService) Resend(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "POST", "/verify/"+id+"/resend", nil, nil, &out); err != nil {
+	if err := s.c.do(ctx, "POST", "/verify/"+url.PathEscape(id)+"/resend", nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -160,7 +226,7 @@ func (s *VerifyService) Resend(ctx context.Context, id string) (map[string]any, 
 // Cancel voids an in-flight verification.
 func (s *VerifyService) Cancel(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "POST", "/verify/"+id+"/cancel", nil, nil, &out); err != nil {
+	if err := s.c.do(ctx, "POST", "/verify/"+url.PathEscape(id)+"/cancel", nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -223,7 +289,7 @@ func (s *VerifyService) CreateApp(ctx context.Context, body map[string]any) (map
 // GetApp fetches one Verify App.
 func (s *VerifyService) GetApp(ctx context.Context, id string) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "GET", "/verify/apps/"+id, nil, nil, &out); err != nil {
+	if err := s.c.do(ctx, "GET", "/verify/apps/"+url.PathEscape(id), nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -232,7 +298,7 @@ func (s *VerifyService) GetApp(ctx context.Context, id string) (map[string]any, 
 // UpdateApp updates a Verify App (full replace - send all fields; name is required).
 func (s *VerifyService) UpdateApp(ctx context.Context, id string, body map[string]any) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "PATCH", "/verify/apps/"+id, nil, body, &out); err != nil {
+	if err := s.c.do(ctx, "PATCH", "/verify/apps/"+url.PathEscape(id), nil, body, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -240,7 +306,7 @@ func (s *VerifyService) UpdateApp(ctx context.Context, id string, body map[strin
 
 // DeleteApp deletes a Verify App.
 func (s *VerifyService) DeleteApp(ctx context.Context, id string) error {
-	return s.c.do(ctx, "DELETE", "/verify/apps/"+id, nil, nil, nil)
+	return s.c.do(ctx, "DELETE", "/verify/apps/"+url.PathEscape(id), nil, nil, nil)
 }
 
 // AppStats returns per-app verification stats.
@@ -250,7 +316,7 @@ func (s *VerifyService) AppStats(ctx context.Context, id string, days int) (map[
 		q.Set("days", strconv.Itoa(days))
 	}
 	var out map[string]any
-	if err := s.c.do(ctx, "GET", "/verify/apps/"+id+"/stats", q, nil, &out); err != nil {
+	if err := s.c.do(ctx, "GET", "/verify/apps/"+url.PathEscape(id)+"/stats", q, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -259,12 +325,17 @@ func (s *VerifyService) AppStats(ctx context.Context, id string, days int) (map[
 // OptOutsService manages the opt-out (STOP / DND) list.
 type OptOutsService struct{ c *Client }
 
-// List returns numbers that have opted out of your messages.
-func (s *OptOutsService) List(ctx context.Context) ([]map[string]any, error) {
+// List returns numbers that have opted out of your messages (newest first).
+// Pass an optional limit (default 200, max 1000).
+func (s *OptOutsService) List(ctx context.Context, limit ...int) ([]map[string]any, error) {
 	var out struct {
 		OptOuts []map[string]any `json:"opt_outs"`
 	}
-	if err := s.c.do(ctx, "GET", "/opt-outs", nil, nil, &out); err != nil {
+	q := url.Values{}
+	if len(limit) > 0 && limit[0] > 0 {
+		q.Set("limit", strconv.Itoa(limit[0]))
+	}
+	if err := s.c.do(ctx, "GET", "/opt-outs", q, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.OptOuts, nil

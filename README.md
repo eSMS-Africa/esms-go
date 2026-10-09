@@ -2,7 +2,7 @@
 
 Official Go SDK for the [eSMS Africa](https://esmsafrica.io) SMS API.
 
-Send SMS across 14+ African countries, track delivery, schedule messages, and check your balance. Standard library only - no third-party dependencies.
+Send SMS across Africa, track delivery, schedule messages, run managed OTP verification, and check your balance. Standard library only - no third-party dependencies.
 
 ## Install
 
@@ -58,7 +58,19 @@ client.Messages.Schedule(ctx, esms.SendParams{
 	Text:        "Reminder",
 	ScheduledAt: "2026-08-01T09:00:00Z",
 })
+
+// Price a message before sending (no charge, no delivery).
+quote, _ := client.Messages.Rate(ctx, esms.RateParams{To: []string{"+256700000000"}, Text: "Hi"})
+
+// Send to many numbers at once (inline recipients and/or contact lists).
+batch, _ := client.Messages.SendBulk(ctx, esms.BulkSendParams{
+	Recipients: []esms.BulkRecipient{{To: "+256700000000"}, {To: "+254711000000"}},
+	Text:       "Hello from eSMS",
+})
+summary, _ := client.Messages.GetBatch(ctx, batch["batch_id"].(string), 0, 0)
 ```
+
+`Messages.Send` attaches a random `Idempotency-Key` to every call so a retried request can never send or charge twice. Set `SendParams.IdempotencyKey` to make retries safe across process restarts too.
 
 ## Delivery status
 
@@ -69,11 +81,14 @@ for _, e := range msg.Timeline {
 	fmt.Println(e.At, e.Event)
 }
 
-// List recent messages
+// List recent messages (filters: Status, To, BatchID, DateFrom, DateTo, Environment)
 page, _ := client.Messages.List(ctx, esms.ListParams{Limit: 20, Status: "delivered"})
 fmt.Println(page.Total)
 
-// Retry a failed one
+// Status of up to 100 messages in one call
+statuses, _ := client.Messages.Statuses(ctx, []string{res.ID})
+
+// Retry a failed one -> *RetryResult{ID, Status, RetryCount}
 client.Messages.Retry(ctx, res.ID)
 ```
 
@@ -87,6 +102,38 @@ routes, _ := client.Routes.List(ctx)
 for _, r := range routes {
 	fmt.Println(r.Code, r.CountryName, r.Currency, r.PricePerSegment)
 }
+```
+
+## Verify (managed OTP)
+
+```go
+v, _ := client.Verify.Start(ctx, esms.VerifyStartParams{To: "+256700000000"}) // or AppID: "..."
+// ...user types the code...
+check, _ := client.Verify.Check(ctx, esms.VerifyCheckParams{
+	VerificationID: v["verification_id"].(string),
+	Code:           "123456",
+})
+if check["status"] == "approved" {
+	// verified
+}
+```
+
+Also available: `Verify.Get`, `Resend`, `Cancel`, `List`, and Verify Apps (`ListApps`, `CreateApp`, `GetApp`, `UpdateApp`, `DeleteApp`, `AppStats`).
+
+## Opt-outs
+
+```go
+client.OptOuts.Add(ctx, "+256700000000")
+optedOut, _ := client.OptOuts.List(ctx)
+client.OptOuts.Remove(ctx, "+256700000000")
+```
+
+## Webhooks
+
+Delivery-report webhooks are signed with HMAC-SHA256 in the `X-Webhook-Signature` header (`sha256=<hex>`). Verify against the exact raw body:
+
+```go
+ok := esms.VerifyWebhook(rawBody, r.Header.Get("X-Webhook-Signature"), secret)
 ```
 
 ## Errors
@@ -120,8 +167,10 @@ if err != nil {
 | `IsAuthentication()` | 401 - key missing or invalid |
 | `IsPermission()` | 403 - not allowed |
 | `IsNotFound()` | 404 - no such message |
+| `IsInvalidRequest()` | 400 / 409 / 413 / 422 - bad request |
 | `IsInsufficientBalance()` | 402 - not enough credit (`Balance()`, `Cost()`, `Currency()`) |
 | `IsRateLimit()` | 429 - slow down |
+| `IsServer()` | 5xx - server error |
 | `IsConnection()` | network failure or timeout |
 
 ## Configuration
@@ -135,6 +184,8 @@ client := esms.New("esms_live_...",
 ```
 
 Requests take a `context.Context`, so timeouts and cancellation work as usual.
+
+Requests authenticate with `Authorization: Bearer <key>`. Non-idempotent POSTs (bulk sends, retries, OTP resends) are only retried on 429, never after a 5xx or network error, so they cannot run twice.
 
 ## License
 

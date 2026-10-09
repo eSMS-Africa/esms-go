@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -67,7 +68,9 @@ func WithHTTPClient(h *http.Client) Option {
 }
 
 // WithMaxRetries sets how many times transient failures (network, 429, 5xx)
-// are retried with backoff. Default 2.
+// are retried with backoff. Default 2. A POST is only retried after a 5xx or
+// network error when it carries an Idempotency-Key (Messages.Send and
+// Verify.Start always add one), so a retry can never send or charge twice.
 func WithMaxRetries(n int) Option {
 	return func(c *Client) { c.maxRetries = n }
 }
@@ -126,6 +129,15 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		payload = b
 	}
 
+	retrySafe := idempotentMethods[strings.ToUpper(method)]
+	for _, hs := range extraHeaders {
+		for k, v := range hs {
+			if v != "" && strings.EqualFold(k, "Idempotency-Key") {
+				retrySafe = true
+			}
+		}
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		var reader io.Reader
@@ -152,8 +164,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			// The request may already have been processed; only retry when safe.
 			lastErr = err
-			if attempt < c.maxRetries {
+			if retrySafe && ctx.Err() == nil && attempt < c.maxRetries {
 				sleep(ctx, backoff(attempt, ""))
 				continue
 			}
@@ -181,7 +194,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			}
 		}
 
-		if (resp.StatusCode == 429 || resp.StatusCode >= 500) && attempt < c.maxRetries {
+		if (resp.StatusCode == 429 || (resp.StatusCode >= 500 && retrySafe)) && attempt < c.maxRetries {
 			lastErr = errorFromResponse(resp.StatusCode, parsed, requestID)
 			sleep(ctx, backoff(attempt, resp.Header.Get("Retry-After")))
 			continue
@@ -192,6 +205,19 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return e
 	}
 	return &Error{Message: "request failed", Err: lastErr}
+}
+
+var idempotentMethods = map[string]bool{"GET": true, "HEAD": true, "PUT": true, "DELETE": true, "OPTIONS": true}
+
+// newIdempotencyKey returns a random UUID v4.
+func newIdempotencyKey() string {
+	var b [16]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Int63())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func backoff(attempt int, retryAfter string) time.Duration {
