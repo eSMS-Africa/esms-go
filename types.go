@@ -16,9 +16,25 @@ type SendParams struct {
 	ScheduledAt string `json:"scheduled_at,omitempty"`
 	// International bills the international-delivery rate (USD) for this send.
 	International bool `json:"international,omitempty"`
+	// Flash sends a class-0 SMS (shown on screen, not stored). Same price.
+	Flash bool `json:"flash,omitempty"`
+	// ValidityPeriod is how many minutes (1-4320) the network keeps retrying.
+	ValidityPeriod int `json:"validity_period,omitempty"`
+	// Priority is 0 normal (default) .. 3 highest.
+	Priority int `json:"priority,omitempty"`
+	// Binary sends a raw binary SMS instead of Text (leave Text empty).
+	Binary *BinaryPayload `json:"binary,omitempty"`
 	// IdempotencyKey makes the send safe to retry: a repeat with the same key
 	// returns the original result. A random key is generated when empty.
 	IdempotencyKey string `json:"-"`
+}
+
+// BinaryPayload is a raw binary SMS (vCard, WAP Push, ...). Hex strings; UDH +
+// data must fit one SMS. Billed as one segment.
+type BinaryPayload struct {
+	Data       string `json:"data"`
+	UDH        string `json:"udh,omitempty"`
+	DataCoding int    `json:"data_coding,omitempty"` // 4 = 8-bit binary (API default), 8 = UCS-2
 }
 
 // SendResult is returned when a message is accepted. BalanceAfter is 0 for
@@ -122,6 +138,13 @@ type BulkSendParams struct {
 	// DripRate is messages per minute for ScheduleMode "drip".
 	DripRate      int  `json:"drip_rate,omitempty"`
 	International bool `json:"international,omitempty"`
+	// Flash, ValidityPeriod and Priority apply to every message (see SendParams).
+	Flash          bool `json:"flash,omitempty"`
+	ValidityPeriod int  `json:"validity_period,omitempty"`
+	Priority       int  `json:"priority,omitempty"`
+	// SkipUnavailable drops (uncharged) recipients that cannot be reached
+	// instead of rejecting the whole request.
+	SkipUnavailable bool `json:"skip_unavailable,omitempty"`
 }
 
 // RateParams prices a message before sending.
@@ -147,6 +170,8 @@ type Route struct {
 	CountryName     string  `json:"country_name"`
 	Currency        string  `json:"currency"`
 	PricePerSegment float64 `json:"price_per_segment"`
-	SenderIDDefault string  `json:"sender_id_default"`
+	SenderIDDefault string  `json:"sender_id_default"` // empty when the route has none
 	IsActive        bool    `json:"is_active"`
+	DialCode        string  `json:"dial_code,omitempty"`
+	Region          string  `json:"region,omitempty"`
 }

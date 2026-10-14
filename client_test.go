@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func testServer(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
@@ -230,5 +231,75 @@ func TestBulkOmitsEmptyListsAndRetryResult(t *testing.T) {
 	r, err := client.Messages.Retry(ctx, "m1")
 	if err != nil || r.RetryCount != 1 || r.ID != "m2" {
 		t.Fatalf("retry result wrong: %+v %v", r, err)
+	}
+}
+
+func TestInsufficientBalanceCurrencyFromLiveMessage(t *testing.T) {
+	// The live API states the currency only inside the message text.
+	client, srv := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(402)
+		_, _ = w.Write([]byte(`{"error":{"code":"insufficient_balance","message":"x","request_id":"r"},"detail":{"code":"insufficient_balance","message":"Insufficient balance. Required KES 5.0, available KES 1.0","required":5.0,"available":1.0}}`))
+	})
+	defer srv.Close()
+	_, err := client.Messages.Send(context.Background(), SendParams{To: "+254711000000", Text: "x"})
+	e, ok := err.(*Error)
+	if !ok || !e.IsInsufficientBalance() {
+		t.Fatalf("want insufficient_balance, got %v", err)
+	}
+	if cur, ok := e.Currency(); !ok || cur != "KES" {
+		t.Fatalf("currency = %q", cur)
+	}
+	if bal, _ := e.Balance(); bal != 1 {
+		t.Fatalf("balance = %v", bal)
+	}
+}
+
+func TestAdvancedOptionsAndRouteExtras(t *testing.T) {
+	var body map[string]any
+	client, srv := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/routes" {
+			_, _ = w.Write([]byte(`[{"code":"ESMS_UG","sender_id_default":null,"dial_code":"+256","region":"East Africa","is_active":true}]`))
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"id":"m","status":"submitted","batch_id":"b"}`))
+	})
+	defer srv.Close()
+	ctx := context.Background()
+	routes, err := client.Routes.List(ctx)
+	if err != nil || routes[0].DialCode != "+256" || routes[0].SenderIDDefault != "" {
+		t.Fatalf("routes = %+v, %v", routes, err)
+	}
+	if _, err := client.Messages.Send(ctx, SendParams{To: "+256700000000", Text: "x", Flash: true, ValidityPeriod: 60, Priority: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if body["flash"] != true || body["validity_period"] != float64(60) || body["priority"] != float64(1) {
+		t.Fatalf("send body = %v", body)
+	}
+	if _, err := client.Messages.SendBulk(ctx, BulkSendParams{Recipients: []BulkRecipient{{To: "+256700000000"}}, Text: "x", SkipUnavailable: true}); err != nil {
+		t.Fatal(err)
+	}
+	if body["skip_unavailable"] != true {
+		t.Fatalf("bulk body = %v", body)
+	}
+}
+
+func TestCancelledContextStopsRetrying(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(429)
+	}))
+	defer srv.Close()
+	client := New("esms_test_abc", WithBaseURL(srv.URL), WithMaxRetries(3))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := client.Balance.Get(ctx)
+	if e, ok := err.(*Error); !ok || !e.IsRateLimit() {
+		t.Fatalf("want the 429, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (no request after cancellation)", calls)
 	}
 }

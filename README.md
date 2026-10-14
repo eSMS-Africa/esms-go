@@ -72,6 +72,8 @@ summary, _ := client.Messages.GetBatch(ctx, batch["batch_id"].(string), 0, 0)
 
 `Messages.Send` attaches a random `Idempotency-Key` to every call so a retried request can never send or charge twice. Set `SendParams.IdempotencyKey` to make retries safe across process restarts too.
 
+Advanced options: `Flash` (class-0 SMS shown on screen), `ValidityPeriod` (minutes, 1-4320), `Priority` (0-3) and `Binary: &esms.BinaryPayload{Data: hex, UDH: hex}` (leave `Text` empty). `BulkSendParams` also takes `Flash`, `ValidityPeriod`, `Priority` and `SkipUnavailable` (drop unreachable recipients, uncharged, instead of rejecting the whole batch).
+
 ## Delivery status
 
 ```go

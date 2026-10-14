@@ -32,7 +32,7 @@ import (
 const (
 	// DefaultBaseURL is the production API endpoint.
 	DefaultBaseURL = "https://sms.esmsafrica.io/api"
-	version        = "1.0.0"
+	version        = "1.1.0"
 )
 
 // Client is the eSMS Africa API client. Create one with New.
@@ -167,7 +167,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			// The request may already have been processed; only retry when safe.
 			lastErr = err
 			if retrySafe && ctx.Err() == nil && attempt < c.maxRetries {
-				sleep(ctx, backoff(attempt, ""))
+				if !sleep(ctx, backoff(attempt, "")) {
+					return &Error{Message: "could not reach the eSMS API: " + err.Error(), Err: err}
+				}
 				continue
 			}
 			return &Error{Message: "could not reach the eSMS API: " + err.Error(), Err: err}
@@ -196,7 +198,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 		if (resp.StatusCode == 429 || (resp.StatusCode >= 500 && retrySafe)) && attempt < c.maxRetries {
 			lastErr = errorFromResponse(resp.StatusCode, parsed, requestID)
-			sleep(ctx, backoff(attempt, resp.Header.Get("Retry-After")))
+			if !sleep(ctx, backoff(attempt, resp.Header.Get("Retry-After"))) {
+				return lastErr // context cancelled while backing off
+			}
 			continue
 		}
 		return errorFromResponse(resp.StatusCode, parsed, requestID)
@@ -235,12 +239,15 @@ func backoff(attempt int, retryAfter string) time.Duration {
 	return time.Duration((base + jitter) * float64(time.Second))
 }
 
-func sleep(ctx context.Context, d time.Duration) {
+// sleep waits d, returning false if ctx is cancelled first.
+func sleep(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
+		return false
 	case <-t.C:
+		return true
 	}
 }
 

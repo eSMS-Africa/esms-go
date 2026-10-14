@@ -2,8 +2,13 @@ package esms
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// The API states the wallet currency only inside the message
+// ("Required KES 5, available KES 1").
+var currencyInMessage = regexp.MustCompile(`\b(?:Required|available)\s+([A-Z]{3})\b`)
 
 // Error is returned for every failure that originates from the eSMS API.
 // Inspect Status and Code to branch, or use errors.As with the typed helpers.
@@ -76,12 +81,19 @@ func (e *Error) Cost() (float64, bool) { return e.detailFloat("cost", "required"
 
 // Currency returns the currency from an insufficient_balance error.
 func (e *Error) Currency() (string, bool) {
-	m, ok := e.Detail.(map[string]any)
-	if !ok {
-		return "", false
+	text := e.Message
+	if m, ok := e.Detail.(map[string]any); ok {
+		if s, ok := m["currency"].(string); ok && s != "" {
+			return s, true
+		}
+		if s, ok := m["message"].(string); ok {
+			text = s
+		}
 	}
-	s, ok := m["currency"].(string)
-	return s, ok
+	if sm := currencyInMessage.FindStringSubmatch(text); sm != nil {
+		return sm[1], true
+	}
+	return "", false
 }
 
 func (e *Error) detailFloat(keys ...string) (float64, bool) {
