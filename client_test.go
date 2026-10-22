@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -301,5 +302,30 @@ func TestCancelledContextStopsRetrying(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1 (no request after cancellation)", calls)
+	}
+}
+
+func TestBulkIdempotencyKeyAndCancelEndpoints(t *testing.T) {
+	var paths, keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"batch_id":"b1","status":"cancelled"}`))
+	}))
+	defer srv.Close()
+	client := New("esms_test_abc", WithBaseURL(srv.URL), WithMaxRetries(0))
+	ctx := context.Background()
+	if _, err := client.Messages.SendBulk(ctx, BulkSendParams{Recipients: []BulkRecipient{{To: "+256700000000"}}, Text: "x", IdempotencyKey: "k-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Messages.Cancel(ctx, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Messages.CancelBatch(ctx, "b1"); err != nil {
+		t.Fatal(err)
+	}
+	if keys[0] != "k-1" || !strings.HasSuffix(paths[1], "/messages/m1/cancel") || !strings.HasSuffix(paths[2], "/messages/batch/b1/cancel") || !strings.HasPrefix(paths[2], "POST") {
+		t.Fatalf("paths=%v keys=%v", paths, keys)
 	}
 }

@@ -145,6 +145,9 @@ type BulkSendParams struct {
 	// SkipUnavailable drops (uncharged) recipients that cannot be reached
 	// instead of rejecting the whole request.
 	SkipUnavailable bool `json:"skip_unavailable,omitempty"`
+	// IdempotencyKey makes the bulk call safe to retry: a repeat with the same
+	// key returns the original batch. A random key is used when empty.
+	IdempotencyKey string `json:"-"`
 }
 
 // RateParams prices a message before sending.

@@ -81,7 +81,30 @@ func (s *MessagesService) Retry(ctx context.Context, messageID string) (*RetryRe
 // batch_id, total_recipients, estimated_cost and status; track it with GetBatch.
 func (s *MessagesService) SendBulk(ctx context.Context, params BulkSendParams) (map[string]any, error) {
 	var out map[string]any
-	if err := s.c.do(ctx, "POST", "/messages/send-bulk", nil, params, &out); err != nil {
+	key := params.IdempotencyKey
+	if key == "" {
+		key = newIdempotencyKey()
+	}
+	if err := s.c.do(ctx, "POST", "/messages/send-bulk", nil, params, &out, map[string]string{"Idempotency-Key": key}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Cancel cancels a scheduled message before it is sent; the charge is refunded.
+func (s *MessagesService) Cancel(ctx context.Context, messageID string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/messages/"+url.PathEscape(messageID)+"/cancel", nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CancelBatch cancels a scheduled bulk batch before its send time; the charge
+// is refunded.
+func (s *MessagesService) CancelBatch(ctx context.Context, batchID string) (map[string]any, error) {
+	var out map[string]any
+	if err := s.c.do(ctx, "POST", "/messages/batch/"+url.PathEscape(batchID)+"/cancel", nil, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
