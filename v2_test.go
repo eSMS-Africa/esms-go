@@ -14,7 +14,7 @@ import (
 
 type seenReq struct {
 	method, path, query, ctype, idem string
-	body                            []byte
+	body                             []byte
 }
 
 func recorder(t *testing.T) (*Client, *[]seenReq) {
