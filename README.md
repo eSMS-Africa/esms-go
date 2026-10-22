@@ -74,6 +74,43 @@ summary, _ := client.Messages.GetBatch(ctx, batch["batch_id"].(string), 0, 0)
 
 Advanced options: `Flash` (class-0 SMS shown on screen), `ValidityPeriod` (minutes, 1-4320), `Priority` (0-3) and `Binary: &esms.BinaryPayload{Data: hex, UDH: hex}` (leave `Text` empty). `BulkSendParams` also takes `Flash`, `ValidityPeriod`, `Priority` and `SkipUnavailable` (drop unreachable recipients, uncharged, instead of rejecting the whole batch).
 
+## Personalised bulk + campaigns
+
+Requires SDK 1.2.0 or later.
+
+```go
+// One call: a template with per-recipient merge fields. Invalid, duplicate and
+// opted-out numbers come back in "rejected" and are never charged.
+batch, err := client.Messages.SendBatch(ctx, esms.SendBatchParams{
+	Template: "Hi {first_name|there}, your balance is UGX {balance}. Pay by {due_date}.",
+	Recipients: []esms.BatchRecipient{
+		{To: "+256772123456", Name: "Ada Obi", Vars: map[string]string{"balance": "1,500", "due_date": "1 Nov"}},
+		{To: "0701234567", Vars: map[string]string{"balance": "200", "due_date": "1 Nov"}},
+	},
+	DefaultCountry: "UG",
+	SenderID:       "ACMEBANK",
+	Schedule:       &esms.Schedule{Mode: "scheduled", At: "2026-11-01T09:00", Timezone: "Africa/Kampala"},
+})
+status, _ := client.Messages.GetBatch(ctx, batch["batch_id"].(string), 0, 50)
+
+// Big lists: upload a CSV / Excel file, map columns, then run a campaign.
+data, _ := os.ReadFile("debtors.xlsx")
+imp, _ := client.Imports.Upload(ctx, "debtors.xlsx", data, "UG")
+job, _ := client.Imports.Process(ctx, imp["id"].(string), esms.ProcessParams{
+	Mapping: esms.ImportMapping{Phone: "Mobile", Name: "Name", Fields: map[string]string{"Amount Due": "amount"}},
+})
+// poll client.Jobs.Get(ctx, int(job["job_id"].(float64))) until status is "done"
+c, _ := client.Campaigns.Create(ctx, esms.JSON{"name": "October dues", "text": "Hi {first_name}, you owe {amount|0}.",
+	"audience": []esms.JSON{{"type": "import", "id": imp["id"]}}}, "october-dues")
+id := int(c["id"].(float64))
+client.Campaigns.Prepare(ctx, id)
+client.Campaigns.Launch(ctx, id)
+report, _ := client.Campaigns.Report(ctx, id)
+```
+
+Also: `Campaigns.Pause/Resume/Cancel/RetryFailed/Duplicate/Recipients/Runs`, `Contacts`, `Groups`, `Templates` (with `StarterPack` and `UseStarter`).
+The signed `campaign.completed` webhook uses the same `esms.VerifyWebhook`; decode it into `esms.CampaignEvent`.
+
 ## Delivery status
 
 ```go

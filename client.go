@@ -32,7 +32,7 @@ import (
 const (
 	// DefaultBaseURL is the production API endpoint.
 	DefaultBaseURL = "https://sms.esmsafrica.io/api"
-	version        = "1.1.0"
+	version        = "1.2.0"
 )
 
 // Client is the eSMS Africa API client. Create one with New.
@@ -52,6 +52,18 @@ type Client struct {
 	Verify *VerifyService
 	// OptOuts manages the opt-out (STOP / DND) list.
 	OptOuts *OptOutsService
+	// Campaigns runs personalised bulk sends with schedules, approvals and reports.
+	Campaigns *CampaignsService
+	// Imports uploads and validates recipient files (CSV / Excel / paste / Google Sheets).
+	Imports *ImportsService
+	// Jobs reads background job progress.
+	Jobs *JobsService
+	// Contacts is the contact book (addressed by E.164 phone).
+	Contacts *ContactsService
+	// Groups manages contact groups.
+	Groups *GroupsService
+	// Templates manages message templates and the starter pack.
+	Templates *TemplatesService
 }
 
 // Option customises a Client.
@@ -91,6 +103,12 @@ func New(apiKey string, opts ...Option) *Client {
 	c.Routes = &RoutesService{c: c}
 	c.Verify = &VerifyService{c: c}
 	c.OptOuts = &OptOutsService{c: c}
+	c.Campaigns = &CampaignsService{c: c}
+	c.Imports = &ImportsService{c: c}
+	c.Jobs = &JobsService{c: c}
+	c.Contacts = &ContactsService{c: c}
+	c.Groups = &GroupsService{c: c}
+	c.Templates = &TemplatesService{c: c}
 	return c
 }
 
@@ -121,7 +139,10 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 
 	var payload []byte
-	if body != nil {
+	contentType := "application/json"
+	if rb, ok := body.(rawBody); ok {
+		payload, contentType = rb.data, rb.contentType
+	} else if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return &Error{Message: "failed to encode request: " + err.Error(), Err: err}
@@ -152,7 +173,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", "esms-go/"+version)
 		if payload != nil {
-			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Type", contentType)
 		}
 		for _, hs := range extraHeaders {
 			for k, v := range hs {

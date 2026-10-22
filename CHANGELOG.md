@@ -2,9 +2,15 @@
 
 All notable changes to this SDK. Versions follow [semver](https://semver.org).
 
-## Unreleased
+## 1.2.0 - 2026-10-22
 
 ### Added
+- `Messages.SendBatch` - personalised bulk (`POST /v1/messages/batch`) with an automatic Idempotency-Key.
+- `Campaigns` (Create, List, Get, Update, Delete, Preview, Prepare, Review, Test, Launch, Approve, Reject, Pause, Resume, Cancel, RetryFailed, Duplicate, Report, Stats, Recipients, Runs).
+- `Imports` (multipart Upload, Paste, GSheet, Get, Process, Errors, Recipients, SaveToGroup) and `Jobs.Get`.
+- `Contacts` (contact book by phone) and `Groups` (CRUD + contacts).
+- `Templates` (CRUD, StarterPack, UseStarter, Render).
+- `CampaignEvent` type for the signed `campaign.completed` webhook.
 - `Messages.Cancel` cancels a scheduled message and `Messages.CancelBatch` a scheduled bulk batch; the charge is refunded.
 
 ### Fixed
