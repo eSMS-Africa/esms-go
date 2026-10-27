@@ -2,6 +2,11 @@
 
 All notable changes to this SDK. Versions follow [semver](https://semver.org).
 
+## 1.2.1 - 2026-10-27
+
+### Security
+- The default HTTP client refuses a redirect to another origin (scheme, host or port), so the API key is never sent over an https -> http downgrade. Same-origin redirects still work. A client passed with `WithHTTPClient` keeps its own redirect policy.
+
 ## 1.2.0 - 2026-10-22
 
 ### Added

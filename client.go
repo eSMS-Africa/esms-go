@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -32,7 +33,7 @@ import (
 const (
 	// DefaultBaseURL is the production API endpoint.
 	DefaultBaseURL = "https://sms.esmsafrica.io/api"
-	version        = "1.2.0"
+	version        = "1.2.1"
 )
 
 // Client is the eSMS Africa API client. Create one with New.
@@ -87,12 +88,26 @@ func WithMaxRetries(n int) Option {
 	return func(c *Client) { c.maxRetries = n }
 }
 
+// safeRedirect keeps the API key on the original origin. net/http already drops
+// Authorization when a redirect leaves the host, but keeps it on an https -> http
+// downgrade of the same host, so that (and any scheme or port change) is refused.
+func safeRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("esms: stopped after 10 redirects")
+	}
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
+		return fmt.Errorf("esms: refusing redirect to another origin (%s://%s)", req.URL.Scheme, req.URL.Host)
+	}
+	return nil
+}
+
 // New creates a Client. The apiKey is your esms_live_... or esms_test_... key.
 func New(apiKey string, opts ...Option) *Client {
 	c := &Client{
 		apiKey:     apiKey,
 		baseURL:    DefaultBaseURL,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second, CheckRedirect: safeRedirect},
 		maxRetries: 2,
 	}
 	for _, o := range opts {

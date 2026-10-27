@@ -329,3 +329,36 @@ func TestBulkIdempotencyKeyAndCancelEndpoints(t *testing.T) {
 		t.Fatalf("paths=%v keys=%v", paths, keys)
 	}
 }
+
+func TestRedirectToAnotherOriginIsRefused(t *testing.T) {
+	var leaked string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get("Authorization")
+		w.Write([]byte(`{}`))
+	}))
+	defer other.Close()
+	var sameAuth string
+	client, srv := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/balance":
+			http.Redirect(w, r, other.URL+"/stolen", http.StatusFound)
+		case "/routes":
+			http.Redirect(w, r, "/landed", http.StatusTemporaryRedirect)
+		default:
+			sameAuth = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"routes":[]}`))
+		}
+	})
+	defer srv.Close()
+	if _, err := client.Balance.Get(context.Background()); err == nil {
+		t.Fatal("expected the cross-origin redirect to be refused")
+	}
+	if leaked != "" {
+		t.Fatalf("API key reached the other origin: %q", leaked)
+	}
+	_, _ = client.Routes.List(context.Background())
+	if sameAuth != "Bearer esms_test_abc" {
+		t.Fatalf("same-origin redirect lost the key: %q", sameAuth)
+	}
+}
